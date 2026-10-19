@@ -1,6 +1,6 @@
 name: Sync Upstream
 
-# 每日把上游 MZRidaz/GLaDOS-Auto-Checkin 的更新合并到本 fork。
+# 每月把上游 MZRidaz/GLaDOS-Auto-Checkin 的更新合并到本 fork。
 # 设计要点：
 #   1. 用 git merge 而不是整文件覆盖（reset --hard），不冲突时两边的改动都会保留，
 #      这样本仓库的定制（action 版本、keepalive job 等）不会被上游冲掉；
@@ -10,7 +10,7 @@ name: Sync Upstream
 on:
   workflow_dispatch:  # 手动触发
   schedule:
-    - cron: '30 18 * * *'   # 每日 UTC 18:30（北京时间 2:30），与签到任务错开
+    - cron: '30 18 1 * *'   # 每月 1 号 UTC 18:30（北京时间 2 号 2:30），与签到任务错开
 
 permissions:
   contents: write
