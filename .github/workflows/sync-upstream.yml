@@ -1,0 +1,67 @@
+name: Sync Upstream
+
+# 每日把上游 MZRidaz/GLaDOS-Auto-Checkin 的更新合并到本 fork。
+# 设计要点：
+#   1. 用 git merge 而不是整文件覆盖（reset --hard），不冲突时两边的改动都会保留，
+#      这样本仓库的定制（action 版本、keepalive job 等）不会被上游冲掉；
+#   2. 一旦产生冲突则主动失败并中止，不会把一个半成品推上去；
+#   3. 不依赖任何第三方 action，只用 git 命令，避免供应链风险。
+
+on:
+  workflow_dispatch:  # 手动触发
+  schedule:
+    - cron: '30 18 * * *'   # 每日 UTC 18:30（北京时间 2:30），与签到任务错开
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: 同步上游
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # 合并需要完整历史，不能只拉一层
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 合并上游更新
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/MZRidaz/GLaDOS-Auto-Checkin.git
+          git fetch --no-tags upstream main
+
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          echo "上游最新提交：$UPSTREAM_SHA"
+
+          # 上游提交已经在本地历史里，说明没有新内容，直接退出
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            echo "已是最新，无需同步"
+            exit 0
+          fi
+
+          echo "发现上游新提交："
+          git log --oneline HEAD..upstream/main | head -20
+
+          # 冲突时中止并报错，保留现场供人工处理
+          if ! git merge --no-edit upstream/main; then
+            echo "::error::上游改动与本地定制存在冲突，已中止合并，请手动处理"
+            git merge --abort || true
+            exit 1
+          fi
+
+          echo "合并完成，准备推送"
+          git log --oneline -5
+          git push origin HEAD:main
+          echo "::notice::已同步上游改动到 main"
