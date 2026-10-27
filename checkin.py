@@ -13,6 +13,7 @@ import hmac
 import base64
 import urllib.parse
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Tuple, Optional, Callable
 from functools import wraps
 import requests
@@ -48,6 +49,14 @@ RETRY_MIN_WAIT = 2.0
 RETRY_MAX_WAIT = 10.0
 MIN_DELAY = 1.0
 MAX_DELAY = 2.0
+
+# ==================== Cookie 到期提醒 ====================
+# 换 Cookie 时请同步更新此日期，格式 YYYY-MM-DD，按 GLaDOS 使用的北京时间（UTC+8）。
+# 留空字符串则完全关闭提醒。日期算错不会影响签到本身，只影响提示的准确性。
+COOKIE_EXPIRES_ON = "2026-11-11"
+# 剩余天数小于等于该值时，在推送内容末尾追加一行提醒
+COOKIE_WARN_DAYS = 2
+
 TELEGRAM_MAX_LENGTH = 4000
 TELEGRAM_TRUNCATE_LENGTH = 3990
 CONTENT_MAX_LENGTH = 3000  # 推送汇总内容统一长度上限，避免超长导致部分渠道发送失败（#4）
@@ -539,6 +548,38 @@ PUSH_CHANNELS: List[Tuple[str, List[str], Callable[[str, str], bool]]] = [
 ]
 
 
+def cookie_expiry_note() -> str:
+    """Cookie 临期提示。
+
+    返回需要追加到推送内容的提醒文本；未配置、未临期或常量已过期时返回空串。
+    日期按 UTC+8 计算，与 GLaDOS 的签到日切分保持一致，避免跨零点时差一天。
+    本函数只影响提示文案，任何异常都不应影响签到主流程。
+    """
+    if not COOKIE_EXPIRES_ON:
+        return ""
+    try:
+        expires = datetime.strptime(COOKIE_EXPIRES_ON, "%Y-%m-%d").date()
+    except ValueError:
+        logger.warning("COOKIE_EXPIRES_ON 格式无效（应为 YYYY-MM-DD）：%s", COOKIE_EXPIRES_ON)
+        return ""
+
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    left = (expires - today).days
+
+    if left < 0:
+        logger.warning(
+            "COOKIE_EXPIRES_ON（%s）已过期但仍签到成功，说明常量忘记更新，请同步为新的到期日",
+            COOKIE_EXPIRES_ON,
+        )
+        return ""
+    if left <= COOKIE_WARN_DAYS:
+        logger.warning("Cookie 将于 %d 天后到期（%s），请更新 Secret COOKIES", left, COOKIE_EXPIRES_ON)
+        when = "今天" if left == 0 else f"{left} 天后"
+        return f"⚠️ Cookie {when}到期（{COOKIE_EXPIRES_ON}），请更新 Secret COOKIES"
+    logger.info("Cookie 剩余 %d 天（到期日 %s）", left, COOKIE_EXPIRES_ON)
+    return ""
+
+
 def push_all(title: str, content: str) -> Tuple[int, int]:
     """
     推送到所有已配置的通知渠道。
@@ -811,6 +852,11 @@ def main() -> int:
             # 非最后一个账号时随机延迟
             if idx < len(cookies):
                 time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+
+    # Cookie 临期提醒：未配置/未临期时返回空串，不改变原有输出结构
+    expiry_note = cookie_expiry_note()
+    if expiry_note:
+        lines.append(expiry_note)
 
     title = f"GLaDOS 签到完成 ✅{ok} ❌{fail} 🔄{repeat}"
     content = "\n".join(lines)
